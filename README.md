@@ -20,8 +20,9 @@ Its configuration uses a username, password, and database; it does not implement
 - Uses a 10-second timeout for client requests and one InfluxDB client attempt; session retries are handled by the gateway.
   Ctrl+C also closes both clients.
 
-The register mapping, measurement names, and tags are configured in [`registers.json`](registers.json).
-Adapt them to your device and data model before collecting data.
+The register mapping, measurement names, and tags are configured in the JSON file selected by `REGISTERS_FILE` (default: `/config/registers.json`).
+Example configurations are available in [`examples/example1.json`](examples/example1.json) and [`examples/example2.json`](examples/example2.json).
+Copy an example and adapt it to your device and data model before collecting data.
 
 ## Run with Python
 
@@ -31,6 +32,9 @@ Use Python 3 (the Dockerfile uses Python 3.12) and make sure the gateway can rea
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
+
+cp examples/example2.json registers.json
+export REGISTERS_FILE="$(pwd)/registers.json"
 
 export MODBUS_HOST=192.168.0.10
 export INFLUXDB_HOST=172.16.1.10
@@ -55,6 +59,12 @@ docker build --pull -t modbus-to-influx .
 The image uses `python:3.12-alpine` and runs as UID/GID `10001:10001`.
 `PYTHONUNBUFFERED=1` is set in the image so stdout/stderr are unbuffered; `PYTHONDONTWRITEBYTECODE=1` prevents runtime bytecode writes.
 Dependencies are installed without retaining pip's download cache.
+The image copies `examples/example2.json` to `/config/registers.json`.
+To use your own configuration, copy an example to a local `registers.json`, edit it for your device, and mount it as shown below:
+
+```sh
+cp examples/example2.json registers.json
+```
 
 Create a local `gateway.env` file with your connection settings:
 
@@ -77,6 +87,7 @@ Start the container and inspect its logs:
 ```sh
 docker run -d --name modbus-to-influx \
   --env-file gateway.env \
+  --mount type=bind,src="$(pwd)/registers.json",dst=/config/registers.json,readonly \
   modbus-to-influx
 docker logs -f modbus-to-influx
 ```
@@ -103,14 +114,14 @@ All settings are read from environment variables at startup.
 | `SLEEP_READOUT` | `5` | Delay between polling cycles, in seconds |
 | `SLEEP_RETRY` | `120` | Delay before restarting after an exception, in seconds |
 | `CLIENT_TIMEOUT` | `10` | Modbus and InfluxDB clients timeout |
-| `REGISTERS_FILE` | Repository-root `registers.json`; `/app/registers.json` in Docker | Path to the register configuration |
+| `REGISTERS_FILE` | `/config/registers.json` | Path to the register configuration |
 
 Ports and delays must be integers; delays must be nonnegative.
 The Modbus unit ID is not explicitly configured by the script and uses the client's default.
 
 ## Register structure
 
-[`registers.json`](registers.json) contains an example of nonempty JSON array of register blocks.
+The register configuration file must contain a nonempty JSON array of register blocks.
 Each block describes a contiguous Modbus read and its destination in InfluxDB.
 All block properties below are required.
 
@@ -202,9 +213,9 @@ Restart the gateway to apply edits during normal operation.
 Missing files and invalid configurations use the existing `SLEEP_RETRY` delay.
 Python expressions and S7 conversion functions are not supported in this Modbus configuration.
 
-The default file path is resolved relative to the application, independently of the working directory.
-Override it with `REGISTERS_FILE`.
-The Docker image includes the file; to supply a different mapping without rebuilding, add `--mount type=bind,src="$(pwd)/registers.json",dst=/app/registers.json,readonly` to the `docker run` command.
+The default file path is `/config/registers.json` for both Python and Docker.
+Override it with `REGISTERS_FILE`; relative paths are resolved from the working directory.
+The Docker bind mount shown above replaces the bundled configuration without rebuilding the image.
 
 All blocks are read each cycle and sent in one batch, with one point per block and a shared timestamp.
 If any block read fails or returns an incomplete result, the entire cycle is skipped.

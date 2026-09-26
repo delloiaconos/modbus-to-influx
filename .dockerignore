@@ -2,6 +2,7 @@
 **
 !Dockerfile
 !requirements.txt
-!registers.json
+!examples/
+!examples/example2.json
 !gateway/
 !gateway/*.py
