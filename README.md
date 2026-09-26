@@ -8,6 +8,31 @@ Its configuration uses a username, password, and database; it does not implement
 
 ## How it works
 
+```mermaid
+flowchart TD
+    config["Register configuration<br/>REGISTERS_FILE: /config/registers.json"] --> load
+    env["Environment variables<br/>Connections, credentials, timeouts and delays"] --> load
+
+    subgraph gateway["Python gateway"]
+        load["Load and validate configuration"] --> init["Check InfluxDB and create/select database"]
+        init --> poll["Open Modbus connection if needed<br/>Read holding-register blocks"]
+        poll --> decode["Decode types and word order<br/>Apply scale and offset"]
+        decode --> write["Write complete batch<br/>Measurements, tags, fields and UTC timestamp"]
+        write --> wait["Wait SLEEP_READOUT"]
+        wait --> poll
+        retry["Close clients and log error<br/>Wait SLEEP_RETRY"] --> load
+    end
+
+    device["Modbus TCP device"] <--> poll
+    init <--> influx[("InfluxDB")]
+    write --> influx
+    load -.->|Error| retry
+    init -.->|Error| retry
+    poll -.->|Failed or incomplete read| retry
+    decode -.->|Error| retry
+    write -.->|Failed or rejected write| retry
+```
+
 - Connects to InfluxDB, creates the configured database if it is missing, and selects it.
   The account needs permission to list databases, create the database when needed, and write points.
 - Reads the configured holding-register blocks from the Modbus device and decodes their fields using the specified types, word order, and scaling.
