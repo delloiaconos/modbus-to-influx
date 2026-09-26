@@ -127,7 +127,7 @@ Tag names must be unique within the block.
 
 Each object in `convert` defines one output field.
 The following properties are required, except `bit` (required only for the `bit` type),
-`length` (required only for `string`), and `byte` (optional, and allowed only for byte-sized types).
+`length` (required only for `string` and `bytes`), and `byte` (optional, and allowed only for byte-sized types).
 
 | Conversion property | Type | Description |
 | --- | --- | --- |
@@ -139,7 +139,7 @@ The following properties are required, except `bit` (required only for the `bit`
 | `offset` | Number | Finite value added after scaling. |
 | `bit` | Integer | For `type: "bit"` only: bit position from 0 (least significant) to 15 (most significant). |
 | `byte` | String | For `char`, `byte`, `uint8`, or `int8` only: `high` selects bits 8–15; `low` selects bits 0–7. Defaults to `low`. |
-| `length` | Integer | For `string` only: positive number of bytes to decode. This is distinct from the block-level `length`, which counts registers. |
+| `length` | Integer | For `string` or `bytes` only: positive number of bytes to decode. This is distinct from the block-level `length`, which counts registers. |
 
 Different measurements or tag sets can reuse field names.
 Unknown properties are rejected.
@@ -153,10 +153,12 @@ Numeric transformations use `value = decoded_value * scale + offset`.
 | `int16`, `int32`, `int64` | 1, 2, 4 | Signed two's-complement integer |
 | `uint16`, `uint32`, `uint64` | 1, 2, 4 | Unsigned integer |
 | `bit` | 1 | Selected bit of a holding register |
-| `uint8`, `byte` | 1 | Selected byte as an unsigned integer (0–255); `byte` is an alias for `uint8` |
+| `uint8` | 1 | Selected byte as an unsigned integer (0–255) |
+| `byte` | 1 | Selected byte as a two-digit lowercase hexadecimal string |
 | `int8` | 1 | Selected byte as a signed two's-complement integer (−128–127) |
 | `char` | 1 | Selected byte as a single Latin-1 character |
 | `string` | `ceil(length / 2)` | Fixed-length Latin-1 text beginning at the high byte of the first ordered word |
+| `bytes` | `ceil(length / 2)` | Fixed-length byte vector as a lowercase hexadecimal string |
 
 The `bit` type extracts a bit from a holding register, rather than reading a Modbus coil.
 With scale `1` and offset `0`, the result is a boolean.
@@ -165,7 +167,7 @@ Other scales or offsets transform its numeric value (`0` or `1`).
 Byte-sized types still read a 16-bit register; `index` remains a register index.
 Use different `byte` selectors to define two fields from the same register.
 `order` continues to control word ordering, so it does not affect byte selection.
-Numeric byte types support the same scale and offset transformations as larger integers.
+`uint8` and `int8` support the same scale and offset transformations as larger integers.
 `char` returns a one-character string, including NUL for byte zero, and requires
 scale `1` and offset `0`. It represents a single Latin-1 byte, not a multi-byte
 UTF-8 character or a string spanning multiple registers.
@@ -178,6 +180,18 @@ extracting bytes. Each word remains high-byte first. An odd byte length discards
 the final unused byte after ordering. Strings preserve spaces, embedded NULs,
 and trailing NULs; there is no implicit terminator or length header. The `byte`
 selector is not supported for strings.
+
+The `bytes` type uses the same register span, word ordering, and odd-length
+truncation rules as `string`. Its required `length` counts bytes, not hex digits;
+its output contains exactly `2 * length` lowercase hex digits. Leading and
+trailing zero bytes are preserved. Neither `bytes` nor `byte` adds a `0x` prefix
+or separators, and both require scale `1` and offset `0`. The `byte` selector
+applies to the single-byte type only; vectors start at the high byte of the first
+ordered word.
+
+`byte` now writes an InfluxDB string instead of an integer. Use `uint8` for numeric
+byte fields; use a new field name when changing the type of an existing InfluxDB
+field to hex text.
 
 Integer decoding preserves 64-bit precision; an identity transform preserves the integer type even when scale/offset are written as `1.0`/`0.0`.
 Fractional scaling uses floating-point arithmetic.

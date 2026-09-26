@@ -34,6 +34,7 @@ REGISTERS_FILE = env.get(
 
 # struct format and number of 16-bit registers read per value.
 BYTE_TYPES = ("char", "byte", "uint8", "int8")
+VECTOR_TYPES = ("string", "bytes")
 REGISTER_TYPES = {
     "float32": ("f", 2), "float64": ("d", 4),
     "int16": ("h", 1), "int32": ("i", 2), "int64": ("q", 4),
@@ -41,16 +42,17 @@ REGISTER_TYPES = {
     "bit": ("H", 1),
     "char": ("c", 1), "byte": ("B", 1),
     "uint8": ("B", 1), "int8": ("b", 1),
-    "string": ("s", None),  # Register width is computed from the byte length.
+    # Vector register widths are computed from their byte lengths.
+    "string": ("s", None), "bytes": ("s", None),
 }
 
 
 def register_width(conversion):
-    """Return the register count, rounding string byte lengths up to whole words."""
-    if conversion["type"] == "string":
+    """Return the register count, rounding vector byte lengths up to whole words."""
+    if conversion["type"] in VECTOR_TYPES:
         length = conversion["length"]
         if type(length) is not int or length <= 0:
-            raise ValueError("String length must be a positive integer number of bytes")
+            raise ValueError("Vector length must be a positive integer number of bytes")
         return (length + 1) // 2
     return REGISTER_TYPES[conversion["type"]][1]
 
@@ -102,7 +104,7 @@ def load_registers(path):
                 raise ValueError(f"{label}: conversion must be an object")
             if conversion.get("type") == "bit":
                 required.add("bit")
-            if conversion.get("type") == "string":
+            if conversion.get("type") in VECTOR_TYPES:
                 required.add("length")
             optional = {"byte"} if conversion.get("type") in BYTE_TYPES else set()
             if not required <= set(conversion) or set(conversion) - required - optional:
@@ -129,7 +131,7 @@ def load_registers(path):
                 raise ValueError(f"{label}: bit for {name} must be an integer from 0 to 15")
             if data_type in BYTE_TYPES and conversion.get("byte", "low") not in ("high", "low"):
                 raise ValueError(f"{label}: byte for {name} must be high or low")
-            if data_type in ("char", "string") and (conversion["scale"] != 1 or conversion["offset"] != 0):
+            if data_type in ("char", "string", "byte", "bytes") and (conversion["scale"] != 1 or conversion["offset"] != 0):
                 raise ValueError(f"{label}: {data_type} field {name} requires scale 1 and offset 0")
             names.add(name)
     return structure
@@ -141,7 +143,8 @@ def decode_registers(regs, conversion):
     Preserve integer/boolean types for identity transforms. Incomplete values
     and non-finite floating-point results raise ValueError. Byte types select
     one byte from a register; char and fixed-length strings return Latin-1 text
-    without stripping whitespace or NUL bytes.
+    without stripping whitespace or NUL bytes. Byte and bytes values return
+    lowercase hexadecimal strings with two digits per byte and no prefix.
     """
 
     fmt = REGISTER_TYPES[conversion["type"]][0]
@@ -154,13 +157,16 @@ def decode_registers(regs, conversion):
         words = words[::-1]
     # Modbus words are already integers; keep the high byte first within each word.
     raw = b"".join(word.to_bytes(2, "big") for word in words)
-    if conversion["type"] == "string":
+    if conversion["type"] in VECTOR_TYPES:
         # Order complete words before taking the requested bytes. For odd
-        # lengths, discard only the final unused byte, not text padding.
-        return raw[:conversion["length"]].decode("latin-1")
+        # lengths, discard only the final unused byte, not payload padding.
+        raw = raw[:conversion["length"]]
+        return raw.hex() if conversion["type"] == "bytes" else raw.decode("latin-1")
     if conversion["type"] in BYTE_TYPES:
         byte_index = 0 if conversion.get("byte", "low") == "high" else 1
         raw = raw[byte_index:byte_index + 1]
+    if conversion["type"] == "byte":
+        return raw.hex()
     value = struct.unpack(">" + fmt, raw)[0]
     if conversion["type"] == "char":
         # Latin-1 gives every byte an exact, reversible character mapping.
