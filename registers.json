@@ -1,5 +1,11 @@
 [
-  { "address": 2, "length": 50, "convert": 
+  { "address": 2, "length": 50,
+    "measurement": "MeasurementName",
+    "tags": [
+      { "name": "host", "value": "HostName" },
+      { "name": "tag1", "value": "Tag1Value" }
+    ],
+    "convert":
     [
       { "name": "V1", "index": 1, "type": "uint16", "order": "msb", "scale": 0.01, "offset": 0 },
       { "name": "V2", "index": 3, "type": "uint16", "order": "msb", "scale": 0.01, "offset": 0 },

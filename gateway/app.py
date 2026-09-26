@@ -44,11 +44,29 @@ def _load_registers(path):
         structure = json.load(source)
     if not isinstance(structure, list) or not structure:
         raise ValueError("Register structure must be a nonempty list")
-    names = set()
+    series_names = {}
     for position, block in enumerate(structure):
         label = f"Register block {position}"
-        if not isinstance(block, dict) or set(block) != {"address", "length", "convert"}:
-            raise ValueError(f"{label} requires address, length and convert")
+        if not isinstance(block, dict) or set(block) != {"address", "length", "measurement", "tags", "convert"}:
+            raise ValueError(f"{label} requires address, length, measurement, tags and convert")
+        measurement = block["measurement"]
+        if not isinstance(measurement, str) or not measurement.strip():
+            raise ValueError(f"{label}: measurement must be a nonempty string")
+        if not isinstance(block["tags"], list):
+            raise ValueError(f"{label}: tags must be a list")
+        tags = {}
+        for tag in block["tags"]:
+            if not isinstance(tag, dict) or set(tag) != {"name", "value"}:
+                raise ValueError(f"{label}: each tag requires name and value")
+            name, value = tag["name"], tag["value"]
+            if not isinstance(name, str) or not name.strip() or name in tags:
+                raise ValueError(f"{label}: tag names must be nonempty and unique")
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{label}: tag values must be nonempty strings")
+            tags[name] = value
+        # Blocks in the same series share a timestamp; prevent field overwrites.
+        series = (measurement, tuple(sorted(tags.items())))
+        names = series_names.setdefault(series, set())
         address, length = block["address"], block["length"]
         if type(address) is not int or not 0 <= address <= 65535:
             raise ValueError(f"{label}: address must be an integer from 0 to 65535")
@@ -66,7 +84,7 @@ def _load_registers(path):
                 raise ValueError(f"{label}: conversion requires {', '.join(sorted(required))}")
             name, index = conversion["name"], conversion["index"]
             if not isinstance(name, str) or not name.strip() or name in names:
-                raise ValueError(f"{label}: field names must be nonempty and unique")
+                raise ValueError(f"{label}: field names must be nonempty and unique within a measurement/tag set")
             data_type = conversion["type"]
             if not isinstance(data_type, str) or data_type not in REGISTER_TYPES:
                 raise ValueError(f"{label}: unsupported type for {name}")
@@ -108,32 +126,26 @@ def _decode_registers(regs, conversion):
 
 
 def _read_registers(mbus, structure):
-    """Read and convert all blocks, returning None if any read is incomplete."""
-    data = {}
+    """Build one point per block, returning None if any read is incomplete."""
+    points = []
     for block in structure:
         regs = mbus.read_holding_registers(block["address"], block["length"])
         if regs is None or len(regs) != block["length"]:
             return None
+        fields = {}
         for conversion in block["convert"]:
-            data[conversion["name"]] = _decode_registers(regs, conversion)
-    return data
+            fields[conversion["name"]] = _decode_registers(regs, conversion)
+        points.append({
+            "measurement": block["measurement"],
+            "tags": {tag["name"]: tag["value"] for tag in block["tags"]},
+            "fields": fields,
+        })
+    return points
 
 
-def _send_sensor_data_to_influxdb(db, value):
-
-    json_body = [
-        {
-            "measurement": "MeasurementName",
-            "tags": {
-                "host": "HostName",
-                "tag1": "Tag1Value"
-            },
-            "time": datetime.datetime.fromtimestamp(int(time.time())),
-            "fields": value
-        }
-    ]
-
-    db.write_points(json_body)
+def _send_sensor_data_to_influxdb(db, points):
+    timestamp = datetime.datetime.fromtimestamp(int(time.time()))
+    db.write_points([dict(point, time=timestamp) for point in points])
 
 
 def _init_influxdb_database(db):
