@@ -12,17 +12,21 @@ implement an InfluxDB bucket/token workflow.
 - Connects to InfluxDB, creates the configured database if it is missing, and
   selects it. The account needs permission to list databases, create the database
   when needed, and write points.
-- Reads 50 holding registers starting at protocol address `2` from the Modbus
-  device, then converts selected registers to floating-point fields.
-- Writes one point per successful read with measurement `MeasurementName`, tags
-  `host=HostName` and `tag1=Tag1Value`, and a timestamp from the gateway's clock.
-- Waits `SLEEP_READOUT` seconds after each polling cycle. An empty or failed read
-  logs `unable to read registers` and continues polling. An exception causes the
-  gateway to wait `SLEEP_RETRY` seconds before initializing both clients again.
+- Reads the configured holding-register blocks from the Modbus device and
+  decodes their fields using the specified types, word order, and scaling.
+- Writes one point per block using its configured measurement and tags, with a
+  shared UTC timestamp from the gateway's clock.
+- Checks InfluxDB with a startup ping and database query, then checks each write's
+  result. Opens the Modbus connection explicitly before polling and checks reads.
+- Waits `SLEEP_READOUT` seconds after a successful polling cycle. Failed opens,
+  incomplete reads, rejected writes, and other exceptions close both clients and
+  trigger a new session after `SLEEP_RETRY` seconds. Errors are logged with context.
+- Uses a 10-second timeout for client requests and one InfluxDB client attempt;
+  session retries are handled by the gateway. Ctrl+C also closes both clients.
 
-The register mapping, measurement name, and tags are hard-coded in
-[`gateway/app.py`](gateway/app.py). Adapt them to your device and data model before
-collecting data.
+The register mapping, measurement names, and tags are configured in
+[`registers.json`](registers.json).
+Adapt them to your device and data model before collecting data.
 
 ## Run with Python
 
@@ -69,6 +73,7 @@ INFLUXDB_PASSWORD=replace-with-your-password
 INFLUXDB_DATABASE=influxdb
 SLEEP_READOUT=5
 SLEEP_RETRY=120
+CLIENT_TIMEOUT=10
 ```
 
 Keep credentials out of version control. Start the container and inspect its logs:
@@ -98,48 +103,81 @@ All settings are read from environment variables at startup.
 | `INFLUXDB_USER` | `influx_user` | InfluxDB username |
 | `INFLUXDB_PASSWORD` | `influx_pass` | InfluxDB password |
 | `INFLUXDB_DATABASE` | `influxdb` | Database to create/select |
-| `INFLUXDB_ORG` | `organization` | Read by the script but currently unused |
 | `SLEEP_READOUT` | `5` | Delay between polling cycles, in seconds |
 | `SLEEP_RETRY` | `120` | Delay before restarting after an exception, in seconds |
+| `CLIENT_TIMEOUT` | `10` | Modbus and InfluxDB clients timeout  |
+| `REGISTERS_FILE` | Repository-root `registers.json`; `/app/registers.json` in Docker | Path to the register configuration |
 
 Ports and delays must be integers; delays must be nonnegative. The Modbus unit ID
 is not explicitly configured by the script and uses the client's default.
 
-## Register mapping
+## Register structure
 
-`REGISTERS` in `gateway/app.py` defines the read blocks, following the structure
-used in `examples/main2.py`. Each block contains:
+[`registers.json`](registers.json) contains a nonempty JSON array of register
+blocks. Each block describes a contiguous Modbus read and its destination in
+InfluxDB. All block properties below are required.
 
-- `address`: the starting holding-register address.
-- `length`: the number of 16-bit registers to read.
-- `convert`: a list of `name` / `func` entries. Each function receives the entire
-  block's register list and returns the value for its named InfluxDB field.
-
-Add blocks or conversions to extend the mapping. Field names must be unique
-across blocks, and conversion indexes are relative to the start of their block.
-All blocks are read each cycle and their fields are combined into one point.
-If any block read fails or returns an incomplete result, the cycle is skipped.
-Conversion exceptions use the existing `SLEEP_RETRY` behavior.
-
-The default structure retains the single read at address `2`, length `50`, and
-all field names and scaling listed below.
-
-Addresses below are zero-based Modbus protocol addresses, not `4xxxx` register
-labels. Each field uses a single register from the returned block, divided by the
-listed value; the script does not combine register pairs or decode signed values.
-
-| Fields (in order) | Register addresses (in order) | Divide by |
+| Block property | Type | Description |
 | --- | --- | --- |
-| `V1`, `V2`, `V3` | 3, 5, 7 | 100 |
-| `I1`, `I2`, `I3` | 9, 11, 13 | 10000 |
-| `U12`, `U23`, `U31` | 15, 17, 19 | 100 |
-| `P1`, `P2`, `P3` | 21, 23, 25 | 100000 |
-| `Q1`, `Q2`, `Q3` | 27, 29, 31 | 100000 |
-| `S1`, `S2`, `S3` | 33, 35, 37 | 100000 |
-| `phi1`, `phi2`, `phi3` | 39, 41, 43 | 10000 |
-| `freq` | 51 | 1000 |
+| `address` | Integer | Starting holding-register address, from 0 to 65535. Uses zero-based protocol addresses, not `4xxxx` labels. |
+| `length` | Integer | Number of 16-bit registers to read, from 1 to 125. The complete block must fit within the address range. |
+| `measurement` | String | Nonempty InfluxDB measurement name for the block. |
+| `tags` | Array | Tag definitions; use an empty array for no tags. |
+| `convert` | Array | Nonempty list of field conversion definitions. |
 
-Confirm addresses, scaling, and units against your device's register map.
+Each object in `tags` requires a nonempty string `name` and a nonempty string
+`value`. Tag names must be unique within the block.
+
+Each object in `convert` defines one output field. The following properties are
+required, except `bit`, which is required only for the `bit` type.
+
+| Conversion property | Type | Description |
+| --- | --- | --- |
+| `name` | String | Nonempty InfluxDB field name. Must be unique within a measurement/tag set, including across blocks sharing that set. |
+| `index` | Integer | Zero-based starting register within the block. All registers needed by the type must fit in the block. |
+| `type` | String | One of the supported data types listed below. |
+| `order` | String | `msb` for most significant 16-bit word first, or `lsb` for least significant word first. |
+| `scale` | Number | Finite multiplier applied to the decoded value. Zero and negative values are allowed. |
+| `offset` | Number | Finite value added after scaling. |
+| `bit` | Integer | For `type: "bit"` only: bit position from 0 (least significant) to 15 (most significant). |
+
+Different measurements or tag sets can reuse field names. Unknown properties
+are rejected. Bytes within each register remain high-byte first; word order has
+no effect on single-register values.
+
+Numeric transformations use `value = decoded_value * scale + offset`.
+
+| Type | Registers | Decoding |
+| --- | --- | --- |
+| `float32` | 2 | IEEE 754 single precision |
+| `float64` | 4 | IEEE 754 double precision |
+| `int16`, `int32`, `int64` | 1, 2, 4 | Signed two's-complement integer |
+| `uint16`, `uint32`, `uint64` | 1, 2, 4 | Unsigned integer |
+| `bit` | 1 | Selected bit of a holding register |
+
+The `bit` type extracts a bit from a holding register, rather than reading a
+Modbus coil. With scale `1` and offset `0`, the result is a boolean. Other scales
+or offsets transform its numeric value (`0` or `1`).
+
+Integer decoding preserves 64-bit precision; an identity transform preserves the
+integer type even when scale/offset are written as `1.0`/`0.0`. Fractional scaling
+uses floating-point arithmetic. NaN and infinite decoded results are rejected.
+
+The gateway loads and validates the file before connecting, and reloads it when
+initializing again after an exception. Restart the gateway to apply edits during
+normal operation. Missing files and invalid configurations use the existing
+`SLEEP_RETRY` delay. Python expressions and S7 conversion functions are not
+supported in this Modbus configuration.
+
+The default file path is resolved relative to the application, independently of
+the working directory. Override it with `REGISTERS_FILE`. The Docker image
+includes the file; to supply a different mapping without rebuilding, add
+`--mount type=bind,src="$(pwd)/registers.json",dst=/app/registers.json,readonly`
+to the `docker run` command.
+
+All blocks are read each cycle and sent in one batch, with one point per block
+and a shared timestamp. If any block read fails or returns an incomplete result,
+the entire cycle is skipped.
 
 ## License
 
