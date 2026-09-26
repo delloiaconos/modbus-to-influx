@@ -15,7 +15,6 @@ INFLUXDB_PORT     = int( env.get( 'INFLUXDB_PORT', '8086' ) )
 INFLUXDB_USER     = env.get( 'INFLUXDB_USER'     , 'influx_user' )
 INFLUXDB_PASSWORD = env.get( 'INFLUXDB_PASSWORD' , 'influx_pass' )
 INFLUXDB_DATABASE = env.get( 'INFLUXDB_DATABASE' , 'influxdb' )
-INFLUXDB_ORG      = env.get( 'INFLUXDB_ORG'      , 'organization' )
 
 SLEEP_READOUT    = int( env.get( 'SLEEP_READOUT' , '5' ))
 SLEEP_RETRY      = int( env.get( 'SLEEP_RETRY'   , '120' ))
