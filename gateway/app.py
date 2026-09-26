@@ -32,12 +32,15 @@ REGISTERS_FILE = env.get(
 )
 
 
-# struct format and number of 16-bit registers per value.
+# struct format and number of 16-bit registers read per value.
+BYTE_TYPES = ("char", "byte", "uint8", "int8")
 REGISTER_TYPES = {
     "float32": ("f", 2), "float64": ("d", 4),
     "int16": ("h", 1), "int32": ("i", 2), "int64": ("q", 4),
     "uint16": ("H", 1), "uint32": ("I", 2), "uint64": ("Q", 4),
     "bit": ("H", 1),
+    "char": ("c", 1), "byte": ("B", 1),
+    "uint8": ("B", 1), "int8": ("b", 1),
 }
 
 
@@ -88,8 +91,12 @@ def load_registers(path):
                 raise ValueError(f"{label}: conversion must be an object")
             if conversion.get("type") == "bit":
                 required.add("bit")
-            if set(conversion) != required:
-                raise ValueError(f"{label}: conversion requires {', '.join(sorted(required))}")
+            optional = {"byte"} if conversion.get("type") in BYTE_TYPES else set()
+            if not required <= set(conversion) or set(conversion) - required - optional:
+                raise ValueError(
+                    f"{label}: conversion requires {', '.join(sorted(required))}; "
+                    f"optional properties: {', '.join(sorted(optional)) or 'none'}"
+                )
             name, index = conversion["name"], conversion["index"]
             if not isinstance(name, str) or not name.strip() or name in names:
                 raise ValueError(f"{label}: field names must be nonempty and unique within a measurement/tag set")
@@ -107,6 +114,10 @@ def load_registers(path):
                     raise ValueError(f"{label}: {setting} for {name} must be a finite number")
             if data_type == "bit" and (type(conversion["bit"]) is not int or not 0 <= conversion["bit"] <= 15):
                 raise ValueError(f"{label}: bit for {name} must be an integer from 0 to 15")
+            if data_type in BYTE_TYPES and conversion.get("byte", "low") not in ("high", "low"):
+                raise ValueError(f"{label}: byte for {name} must be high or low")
+            if data_type == "char" and (conversion["scale"] != 1 or conversion["offset"] != 0):
+                raise ValueError(f"{label}: char field {name} requires scale 1 and offset 0")
             names.add(name)
     return structure
 
@@ -115,7 +126,8 @@ def decode_registers(regs, conversion):
     """Decode a validated field definition and apply value * scale + offset.
 
     Preserve integer/boolean types for identity transforms. Incomplete values
-    and non-finite floating-point results raise ValueError.
+    and non-finite floating-point results raise ValueError. Byte types select
+    one byte from a register; char returns a single Latin-1 character.
     """
 
     fmt, width = REGISTER_TYPES[conversion["type"]]
@@ -127,7 +139,13 @@ def decode_registers(regs, conversion):
         words = words[::-1]
     # Modbus words are already integers; keep the high byte first within each word.
     raw = b"".join(word.to_bytes(2, "big") for word in words)
+    if conversion["type"] in BYTE_TYPES:
+        byte_index = 0 if conversion.get("byte", "low") == "high" else 1
+        raw = raw[byte_index:byte_index + 1]
     value = struct.unpack(">" + fmt, raw)[0]
+    if conversion["type"] == "char":
+        # Latin-1 gives every byte an exact, reversible character mapping.
+        return value.decode("latin-1")
     if conversion["type"] == "bit":
         value = bool(value & (1 << conversion["bit"]))
     # Preserve exact 64-bit integers and booleans for identity transformations.

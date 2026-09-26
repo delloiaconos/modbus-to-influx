@@ -126,7 +126,8 @@ Each object in `tags` requires a nonempty string `name` and a nonempty string `v
 Tag names must be unique within the block.
 
 Each object in `convert` defines one output field.
-The following properties are required, except `bit`, which is required only for the `bit` type.
+The following properties are required, except `bit` (required only for the `bit` type)
+and `byte` (optional, and allowed only for byte-sized types).
 
 | Conversion property | Type | Description |
 | --- | --- | --- |
@@ -137,6 +138,7 @@ The following properties are required, except `bit`, which is required only for 
 | `scale` | Number | Finite multiplier applied to the decoded value. Zero and negative values are allowed. |
 | `offset` | Number | Finite value added after scaling. |
 | `bit` | Integer | For `type: "bit"` only: bit position from 0 (least significant) to 15 (most significant). |
+| `byte` | String | For `char`, `byte`, `uint8`, or `int8` only: `high` selects bits 8–15; `low` selects bits 0–7. Defaults to `low`. |
 
 Different measurements or tag sets can reuse field names.
 Unknown properties are rejected.
@@ -146,15 +148,25 @@ Numeric transformations use `value = decoded_value * scale + offset`.
 
 | Type | Registers | Decoding |
 | --- | --- | --- |
-| `float32` | 2 | IEEE 754 single precision |
-| `float64` | 4 | IEEE 754 double precision |
+| `float32`, `float64` | 2, 4 | IEEE 754 single/double precision |
 | `int16`, `int32`, `int64` | 1, 2, 4 | Signed two's-complement integer |
 | `uint16`, `uint32`, `uint64` | 1, 2, 4 | Unsigned integer |
 | `bit` | 1 | Selected bit of a holding register |
+| `uint8`, `byte` | 1 | Selected byte as an unsigned integer (0–255); `byte` is an alias for `uint8` |
+| `int8` | 1 | Selected byte as a signed two's-complement integer (−128–127) |
+| `char` | 1 | Selected byte as a single Latin-1 character |
 
 The `bit` type extracts a bit from a holding register, rather than reading a Modbus coil.
 With scale `1` and offset `0`, the result is a boolean.
 Other scales or offsets transform its numeric value (`0` or `1`).
+
+Byte-sized types still read a 16-bit register; `index` remains a register index.
+Use different `byte` selectors to define two fields from the same register.
+`order` continues to control word ordering, so it does not affect byte selection.
+Numeric byte types support the same scale and offset transformations as larger integers.
+`char` returns a one-character string, including NUL for byte zero, and requires
+scale `1` and offset `0`. It represents a single Latin-1 byte, not a multi-byte
+UTF-8 character or a string spanning multiple registers.
 
 Integer decoding preserves 64-bit precision; an identity transform preserves the integer type even when scale/offset are written as `1.0`/`0.0`.
 Fractional scaling uses floating-point arithmetic.
