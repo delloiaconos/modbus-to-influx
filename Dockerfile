@@ -1,5 +1,9 @@
-FROM python:3.12.1-alpine3.18
-MAINTAINER Salvatore Dello Iacono
+FROM python:3.12-alpine
+LABEL org.opencontainers.image.authors="Salvatore Dello Iacono"
+
+# Flush stdout/stderr immediately and avoid writing bytecode at runtime.
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
 # Override with docker run -e or --env-file.
 ENV MODBUS_HOST=192.168.0.10
@@ -16,9 +20,16 @@ ENV REGISTERS_FILE=/app/registers.json
 
 WORKDIR /app
 COPY requirements.txt requirements.txt
-RUN pip install -r requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
+
+# The gateway only needs outbound connections and read access to its config.
+RUN addgroup -S -g 10001 gateway && adduser -S -D -H -u 10001 -G gateway gateway
 
 COPY gateway /app/
 COPY registers.json /app/registers.json
 
+USER 10001:10001
+
+# Use the application's KeyboardInterrupt handler to close both clients.
+STOPSIGNAL SIGINT
 CMD ["python", "app.py"]
