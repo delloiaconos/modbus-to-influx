@@ -107,6 +107,23 @@ is not explicitly configured by the script and uses the client's default.
 
 ## Register mapping
 
+`REGISTERS` in `gateway/app.py` defines the read blocks, following the structure
+used in `examples/main2.py`. Each block contains:
+
+- `address`: the starting holding-register address.
+- `length`: the number of 16-bit registers to read.
+- `convert`: a list of `name` / `func` entries. Each function receives the entire
+  block's register list and returns the value for its named InfluxDB field.
+
+Add blocks or conversions to extend the mapping. Field names must be unique
+across blocks, and conversion indexes are relative to the start of their block.
+All blocks are read each cycle and their fields are combined into one point.
+If any block read fails or returns an incomplete result, the cycle is skipped.
+Conversion exceptions use the existing `SLEEP_RETRY` behavior.
+
+The default structure retains the single read at address `2`, length `50`, and
+all field names and scaling listed below.
+
 Addresses below are zero-based Modbus protocol addresses, not `4xxxx` register
 labels. Each field uses a single register from the returned block, divided by the
 listed value; the script does not combine register pairs or decode signed values.
