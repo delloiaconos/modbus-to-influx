@@ -38,8 +38,9 @@ REGISTER_TYPES = {
 }
 
 
-def _load_registers(path):
+def load_registers(path):
     """Load and validate the JSON holding-register blocks before polling."""
+
     with open(path, encoding="utf-8") as source:
         structure = json.load(source)
     if not isinstance(structure, list) or not structure:
@@ -103,8 +104,9 @@ def _load_registers(path):
     return structure
 
 
-def _decode_registers(regs, conversion):
+def decode_registers(regs, conversion):
     """Decode words (MSB or LSB first), then apply value * scale + offset."""
+
     fmt, width = REGISTER_TYPES[conversion["type"]]
     index = conversion["index"]
     words = regs[index:index + width]
@@ -125,7 +127,7 @@ def _decode_registers(regs, conversion):
     return value
 
 
-def _read_registers(mbus, structure):
+def read_registers(mbus, structure):
     """Build one point per block, returning None if any read is incomplete."""
     points = []
     for block in structure:
@@ -134,7 +136,7 @@ def _read_registers(mbus, structure):
             return None
         fields = {}
         for conversion in block["convert"]:
-            fields[conversion["name"]] = _decode_registers(regs, conversion)
+            fields[conversion["name"]] = decode_registers(regs, conversion)
         points.append({
             "measurement": block["measurement"],
             "tags": {tag["name"]: tag["value"] for tag in block["tags"]},
@@ -143,38 +145,30 @@ def _read_registers(mbus, structure):
     return points
 
 
-def _send_sensor_data_to_influxdb(db, points):
+def send_data_to_influxdb(db, points):
     timestamp = datetime.datetime.fromtimestamp(int(time.time()))
     db.write_points([dict(point, time=timestamp) for point in points])
 
 
-def _init_influxdb_database(db):
+def init_indfluxdb(db):
     databases = db.get_list_database()
     if len(list(filter(lambda x: x['name'] == INFLUXDB_DATABASE, databases))) == 0:
         db.create_database(INFLUXDB_DATABASE)
     db.switch_database(INFLUXDB_DATABASE)
 
 def main():
-
-        registers = _load_registers(REGISTERS_FILE)
-
+        registers = load_registers(REGISTERS_FILE)
         db = InfluxDBClient(INFLUXDB_HOST, INFLUXDB_PORT, INFLUXDB_USER, INFLUXDB_PASSWORD )
-
-        _init_influxdb_database( db )
-        print("Initialized db")
+        init_indfluxdb( db )
 
         mbus = ModbusClient(host=MODBUS_HOST, port=MODBUS_PORT, auto_open=True, debug=False)
 
         while True:
-            data = _read_registers(mbus, registers)
-
+            data = read_registers(mbus, registers)
             if data:
-                print( data )
-                _send_sensor_data_to_influxdb( db, data )
-
+                send_data_to_influxdb( db, data )
             else:
                 print('unable to read registers')
-
             time.sleep(SLEEP_READOUT)
 
 if __name__ == '__main__':
