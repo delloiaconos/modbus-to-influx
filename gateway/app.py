@@ -5,11 +5,15 @@ import datetime
 import json
 import math
 import struct
+import logging
 from pathlib import Path
 from os import environ as env
 from influxdb import InfluxDBClient
 from pyModbusTCP.client import ModbusClient
 
+
+LOGGER = logging.getLogger(__name__)
+CLIENT_TIMEOUT = 10  # Bound network requests so failures reach the retry loop.
 
 MODBUS_HOST       = env.get( 'MODBUS_HOST'       , '192.168.0.10' )
 MODBUS_PORT       = int( env.get( 'MODBUS_PORT'  , '502' ) )
@@ -39,7 +43,11 @@ REGISTER_TYPES = {
 
 
 def load_registers(path):
-    """Load and validate the JSON holding-register blocks before polling."""
+    """Return validated block definitions from a UTF-8 JSON file.
+
+    File/JSON errors and invalid definitions propagate to the retry loop before
+    any client is created. Duplicate fields in the same series are rejected.
+    """
 
     with open(path, encoding="utf-8") as source:
         structure = json.load(source)
@@ -105,7 +113,11 @@ def load_registers(path):
 
 
 def decode_registers(regs, conversion):
-    """Decode words (MSB or LSB first), then apply value * scale + offset."""
+    """Decode a validated field definition and apply value * scale + offset.
+
+    Preserve integer/boolean types for identity transforms. Incomplete values
+    and non-finite floating-point results raise ValueError.
+    """
 
     fmt, width = REGISTER_TYPES[conversion["type"]]
     index = conversion["index"]
@@ -128,7 +140,11 @@ def decode_registers(regs, conversion):
 
 
 def read_registers(mbus, structure):
-    """Build one point per block, returning None if any read is incomplete."""
+    """Build one point per block from an already connected Modbus client.
+
+    Return None for failed/short reads so no partial batch is written. Decode
+    and transport exceptions propagate to the caller for cleanup and retry.
+    """
     points = []
     for block in structure:
         regs = mbus.read_holding_registers(block["address"], block["length"])
@@ -146,36 +162,94 @@ def read_registers(mbus, structure):
 
 
 def send_data_to_influxdb(db, points):
-    timestamp = datetime.datetime.fromtimestamp(int(time.time()))
-    db.write_points([dict(point, time=timestamp) for point in points])
+    """Write a complete batch with one UTC timestamp; raise on rejected writes."""
+    if not points:
+        raise ValueError("Cannot write an empty point batch")
+    timestamp = datetime.datetime.now(datetime.timezone.utc)
+    if not db.write_points([dict(point, time=timestamp) for point in points]):
+        raise RuntimeError("InfluxDB did not acknowledge the point batch")
 
 
-def init_indfluxdb(db):
+def init_influxdb(db):
+    """Check server reachability, create the database if absent, and select it.
+
+    Database queries also check authenticated access; a successful ping alone
+    does not establish that this account can read or write the database.
+    """
+    if not db.ping():
+        raise ConnectionError("InfluxDB ping returned no server version")
     databases = db.get_list_database()
-    if len(list(filter(lambda x: x['name'] == INFLUXDB_DATABASE, databases))) == 0:
+    if not any(database['name'] == INFLUXDB_DATABASE for database in databases):
         db.create_database(INFLUXDB_DATABASE)
     db.switch_database(INFLUXDB_DATABASE)
 
+
+def close_clients(mbus, db):
+    """Close both clients, even if one close fails, without masking the cause."""
+    for name, client in (("Modbus", mbus), ("InfluxDB", db)):
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                LOGGER.exception("Failed to close %s client", name)
+
+
 def main():
-        registers = load_registers(REGISTERS_FILE)
-        db = InfluxDBClient(INFLUXDB_HOST, INFLUXDB_PORT, INFLUXDB_USER, INFLUXDB_PASSWORD )
-        init_indfluxdb( db )
+    """Run one connection session; always close clients before returning/raising.
 
-        mbus = ModbusClient(host=MODBUS_HOST, port=MODBUS_PORT, auto_open=True, debug=False)
-
+    Failed opens, reads, and writes end the session so run() can reconnect after
+    SLEEP_RETRY. Successful polls wait SLEEP_READOUT before the next cycle.
+    """
+    registers = load_registers(REGISTERS_FILE)
+    if SLEEP_READOUT < 0 or SLEEP_RETRY < 0:
+        raise ValueError("Polling and retry delays must be nonnegative")
+    db = None
+    mbus = None
+    try:
+        db = InfluxDBClient(
+            INFLUXDB_HOST, INFLUXDB_PORT, INFLUXDB_USER, INFLUXDB_PASSWORD,
+            timeout=CLIENT_TIMEOUT, retries=1,
+        )
+        init_influxdb(db)
+        mbus = ModbusClient(
+            host=MODBUS_HOST, port=MODBUS_PORT,
+            auto_open=False, timeout=CLIENT_TIMEOUT,
+        )
         while True:
+            # is_open describes the socket; only an actual read confirms health.
+            if not mbus.is_open and not mbus.open():
+                raise ConnectionError(
+                    f"Unable to connect to Modbus {MODBUS_HOST}:{MODBUS_PORT}: "
+                    f"{mbus.last_error_as_txt}"
+                )
             data = read_registers(mbus, registers)
-            if data:
-                send_data_to_influxdb( db, data )
-            else:
-                print('unable to read registers')
+            if not data:
+                raise ConnectionError(
+                    f"Incomplete Modbus read: {mbus.last_error_as_txt}; "
+                    f"{mbus.last_except_as_txt}"
+                )
+            # The write itself checks InfluxDB health on every polling cycle.
+            send_data_to_influxdb(db, data)
+            LOGGER.debug("Wrote %d register blocks", len(data))
             time.sleep(SLEEP_READOUT)
+    finally:
+        close_clients(mbus, db)
+
+
+def run():
+    """Retry failed sessions with a delay; allow Ctrl+C during polls or waits."""
+    try:
+        while True:
+            try:
+                main()
+            except Exception:
+                LOGGER.exception("Gateway session failed; retrying in %s seconds", SLEEP_RETRY)
+            time.sleep(max(0, SLEEP_RETRY))
+    except KeyboardInterrupt:
+        LOGGER.info("Gateway stopped")
+
 
 if __name__ == '__main__':
-    print('MODBUS TCP to INFLUX DB')
-    while True:
-        try:
-            main()
-        except Exception as e:
-            print(e)
-            time.sleep(SLEEP_RETRY)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    LOGGER.info('MODBUS TCP to INFLUX DB')
+    run()
