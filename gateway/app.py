@@ -13,7 +13,6 @@ from pyModbusTCP.client import ModbusClient
 
 
 LOGGER = logging.getLogger(__name__)
-CLIENT_TIMEOUT = 10  # Bound network requests so failures reach the retry loop.
 
 MODBUS_HOST       = env.get( 'MODBUS_HOST'       , '192.168.0.10' )
 MODBUS_PORT       = int( env.get( 'MODBUS_PORT'  , '502' ) )
@@ -26,7 +25,7 @@ INFLUXDB_DATABASE = env.get( 'INFLUXDB_DATABASE' , 'influxdb' )
 
 SLEEP_READOUT    = int( env.get( 'SLEEP_READOUT' , '5' ))
 SLEEP_RETRY      = int( env.get( 'SLEEP_RETRY'   , '120' ))
-
+CLIENT_TIMEOUT   = int( env.get( 'CLIENT_TIMEOUT' , '10' ))
 
 REGISTERS_FILE = env.get(
     'REGISTERS_FILE', str(Path(__file__).resolve().parent.parent / 'registers.json')
@@ -145,6 +144,7 @@ def read_registers(mbus, structure):
     Return None for failed/short reads so no partial batch is written. Decode
     and transport exceptions propagate to the caller for cleanup and retry.
     """
+
     points = []
     for block in structure:
         regs = mbus.read_holding_registers(block["address"], block["length"])
@@ -163,6 +163,7 @@ def read_registers(mbus, structure):
 
 def send_data_to_influxdb(db, points):
     """Write a complete batch with one UTC timestamp; raise on rejected writes."""
+    
     if not points:
         raise ValueError("Cannot write an empty point batch")
     timestamp = datetime.datetime.now(datetime.timezone.utc)
@@ -176,6 +177,7 @@ def init_influxdb(db):
     Database queries also check authenticated access; a successful ping alone
     does not establish that this account can read or write the database.
     """
+    
     if not db.ping():
         raise ConnectionError("InfluxDB ping returned no server version")
     databases = db.get_list_database()
@@ -211,10 +213,12 @@ def main():
             timeout=CLIENT_TIMEOUT, retries=1,
         )
         init_influxdb(db)
+
         mbus = ModbusClient(
             host=MODBUS_HOST, port=MODBUS_PORT,
             auto_open=False, timeout=CLIENT_TIMEOUT,
         )
+        
         while True:
             # is_open describes the socket; only an actual read confirms health.
             if not mbus.is_open and not mbus.open():
