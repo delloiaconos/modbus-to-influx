@@ -126,8 +126,8 @@ Each object in `tags` requires a nonempty string `name` and a nonempty string `v
 Tag names must be unique within the block.
 
 Each object in `convert` defines one output field.
-The following properties are required, except `bit` (required only for the `bit` type)
-and `byte` (optional, and allowed only for byte-sized types).
+The following properties are required, except `bit` (required only for the `bit` type),
+`length` (required only for `string`), and `byte` (optional, and allowed only for byte-sized types).
 
 | Conversion property | Type | Description |
 | --- | --- | --- |
@@ -139,6 +139,7 @@ and `byte` (optional, and allowed only for byte-sized types).
 | `offset` | Number | Finite value added after scaling. |
 | `bit` | Integer | For `type: "bit"` only: bit position from 0 (least significant) to 15 (most significant). |
 | `byte` | String | For `char`, `byte`, `uint8`, or `int8` only: `high` selects bits 8–15; `low` selects bits 0–7. Defaults to `low`. |
+| `length` | Integer | For `string` only: positive number of bytes to decode. This is distinct from the block-level `length`, which counts registers. |
 
 Different measurements or tag sets can reuse field names.
 Unknown properties are rejected.
@@ -155,6 +156,7 @@ Numeric transformations use `value = decoded_value * scale + offset`.
 | `uint8`, `byte` | 1 | Selected byte as an unsigned integer (0–255); `byte` is an alias for `uint8` |
 | `int8` | 1 | Selected byte as a signed two's-complement integer (−128–127) |
 | `char` | 1 | Selected byte as a single Latin-1 character |
+| `string` | `ceil(length / 2)` | Fixed-length Latin-1 text beginning at the high byte of the first ordered word |
 
 The `bit` type extracts a bit from a holding register, rather than reading a Modbus coil.
 With scale `1` and offset `0`, the result is a boolean.
@@ -167,6 +169,15 @@ Numeric byte types support the same scale and offset transformations as larger i
 `char` returns a one-character string, including NUL for byte zero, and requires
 scale `1` and offset `0`. It represents a single Latin-1 byte, not a multi-byte
 UTF-8 character or a string spanning multiple registers.
+
+String fields span consecutive registers starting at `index` and require scale `1`
+and offset `0`. Their `length` counts bytes (one Latin-1 character per byte), and
+the complete register span must fit within the block. With `msb`, register order
+is unchanged; with `lsb`, all words in the string's span are reversed before
+extracting bytes. Each word remains high-byte first. An odd byte length discards
+the final unused byte after ordering. Strings preserve spaces, embedded NULs,
+and trailing NULs; there is no implicit terminator or length header. The `byte`
+selector is not supported for strings.
 
 Integer decoding preserves 64-bit precision; an identity transform preserves the integer type even when scale/offset are written as `1.0`/`0.0`.
 Fractional scaling uses floating-point arithmetic.

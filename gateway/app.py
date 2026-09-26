@@ -41,7 +41,18 @@ REGISTER_TYPES = {
     "bit": ("H", 1),
     "char": ("c", 1), "byte": ("B", 1),
     "uint8": ("B", 1), "int8": ("b", 1),
+    "string": ("s", None),  # Register width is computed from the byte length.
 }
+
+
+def register_width(conversion):
+    """Return the register count, rounding string byte lengths up to whole words."""
+    if conversion["type"] == "string":
+        length = conversion["length"]
+        if type(length) is not int or length <= 0:
+            raise ValueError("String length must be a positive integer number of bytes")
+        return (length + 1) // 2
+    return REGISTER_TYPES[conversion["type"]][1]
 
 
 def load_registers(path):
@@ -91,6 +102,8 @@ def load_registers(path):
                 raise ValueError(f"{label}: conversion must be an object")
             if conversion.get("type") == "bit":
                 required.add("bit")
+            if conversion.get("type") == "string":
+                required.add("length")
             optional = {"byte"} if conversion.get("type") in BYTE_TYPES else set()
             if not required <= set(conversion) or set(conversion) - required - optional:
                 raise ValueError(
@@ -103,7 +116,7 @@ def load_registers(path):
             data_type = conversion["type"]
             if not isinstance(data_type, str) or data_type not in REGISTER_TYPES:
                 raise ValueError(f"{label}: unsupported type for {name}")
-            width = REGISTER_TYPES[data_type][1]
+            width = register_width(conversion)
             if type(index) is not int or not 0 <= index <= length - width:
                 raise ValueError(f"{label}: all registers for {name} must be within the block")
             if conversion["order"] not in ("msb", "lsb"):
@@ -116,8 +129,8 @@ def load_registers(path):
                 raise ValueError(f"{label}: bit for {name} must be an integer from 0 to 15")
             if data_type in BYTE_TYPES and conversion.get("byte", "low") not in ("high", "low"):
                 raise ValueError(f"{label}: byte for {name} must be high or low")
-            if data_type == "char" and (conversion["scale"] != 1 or conversion["offset"] != 0):
-                raise ValueError(f"{label}: char field {name} requires scale 1 and offset 0")
+            if data_type in ("char", "string") and (conversion["scale"] != 1 or conversion["offset"] != 0):
+                raise ValueError(f"{label}: {data_type} field {name} requires scale 1 and offset 0")
             names.add(name)
     return structure
 
@@ -127,10 +140,12 @@ def decode_registers(regs, conversion):
 
     Preserve integer/boolean types for identity transforms. Incomplete values
     and non-finite floating-point results raise ValueError. Byte types select
-    one byte from a register; char returns a single Latin-1 character.
+    one byte from a register; char and fixed-length strings return Latin-1 text
+    without stripping whitespace or NUL bytes.
     """
 
-    fmt, width = REGISTER_TYPES[conversion["type"]]
+    fmt = REGISTER_TYPES[conversion["type"]][0]
+    width = register_width(conversion)
     index = conversion["index"]
     words = regs[index:index + width]
     if len(words) != width:
@@ -139,6 +154,10 @@ def decode_registers(regs, conversion):
         words = words[::-1]
     # Modbus words are already integers; keep the high byte first within each word.
     raw = b"".join(word.to_bytes(2, "big") for word in words)
+    if conversion["type"] == "string":
+        # Order complete words before taking the requested bytes. For odd
+        # lengths, discard only the final unused byte, not text padding.
+        return raw[:conversion["length"]].decode("latin-1")
     if conversion["type"] in BYTE_TYPES:
         byte_index = 0 if conversion.get("byte", "low") == "high" else 1
         raw = raw[byte_index:byte_index + 1]
