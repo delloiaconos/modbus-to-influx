@@ -1,0 +1,27 @@
+[
+  { "address": 2, "length": 50, "convert": 
+    [
+      { "name": "V1", "index": 1, "type": "uint16", "order": "msb", "scale": 0.01, "offset": 0 },
+      { "name": "V2", "index": 3, "type": "uint16", "order": "msb", "scale": 0.01, "offset": 0 },
+      { "name": "V3", "index": 5, "type": "uint16", "order": "msb", "scale": 0.01, "offset": 0 },
+      { "name": "I1", "index": 7, "type": "uint16", "order": "msb", "scale": 0.0001, "offset": 0 },
+      { "name": "I2", "index": 9, "type": "uint16", "order": "msb", "scale": 0.0001, "offset": 0 },
+      { "name": "I3", "index": 11, "type": "uint16", "order": "msb", "scale": 0.0001, "offset": 0 },
+      { "name": "U12", "index": 13, "type": "uint16", "order": "msb", "scale": 0.01, "offset": 0 },
+      { "name": "U23", "index": 15, "type": "uint16", "order": "msb", "scale": 0.01, "offset": 0 },
+      { "name": "U31", "index": 17, "type": "uint16", "order": "msb", "scale": 0.01, "offset": 0 },
+      { "name": "P1", "index": 19, "type": "uint16", "order": "msb", "scale": 1e-05, "offset": 0 },
+      { "name": "P2", "index": 21, "type": "uint16", "order": "msb", "scale": 1e-05, "offset": 0 },
+      { "name": "P3", "index": 23, "type": "uint16", "order": "msb", "scale": 1e-05, "offset": 0 },
+      { "name": "Q1", "index": 25, "type": "uint16", "order": "msb", "scale": 1e-05, "offset": 0 },
+      { "name": "Q2", "index": 27, "type": "uint16", "order": "msb", "scale": 1e-05, "offset": 0 },
+      { "name": "Q3", "index": 29, "type": "uint16", "order": "msb", "scale": 1e-05, "offset": 0 },
+      { "name": "S1", "index": 31, "type": "uint16", "order": "msb", "scale": 1e-05, "offset": 0 },
+      { "name": "S2", "index": 33, "type": "uint16", "order": "msb", "scale": 1e-05, "offset": 0 },
+      { "name": "S3", "index": 35, "type": "uint16", "order": "msb", "scale": 1e-05, "offset": 0 },
+      { "name": "phi1", "index": 37, "type": "uint16", "order": "msb", "scale": 0.0001, "offset": 0 },
+      { "name": "phi2", "index": 39, "type": "uint16", "order": "msb", "scale": 0.0001, "offset": 0 },
+      { "name": "phi3", "index": 41, "type": "uint16", "order": "msb", "scale": 0.0001, "offset": 0 },
+      { "name": "freq", "index": 49, "type": "uint16", "order": "msb", "scale": 0.001, "offset": 0 }
+    ] }
+]
