@@ -48,7 +48,7 @@ Stop the process with `Ctrl+C`.
 ## Run with Docker
 
 The [`Dockerfile`](Dockerfile) installs dependencies from
-[`requirement.txt`](requirement.txt). Build the image from the repository root:
+[`requirements.txt`](requirements.txt). Build the image from the repository root:
 
 ```sh
 docker build -t modbus-to-influx .
