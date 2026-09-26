@@ -27,9 +27,7 @@ SLEEP_READOUT    = int( env.get( 'SLEEP_READOUT' , '5' ))
 SLEEP_RETRY      = int( env.get( 'SLEEP_RETRY'   , '120' ))
 CLIENT_TIMEOUT   = int( env.get( 'CLIENT_TIMEOUT' , '10' ))
 
-REGISTERS_FILE = env.get(
-    'REGISTERS_FILE', str(Path(__file__).resolve().parent.parent / 'registers.json')
-)
+REGISTERS_FILE = env.get( 'REGISTERS_FILE', "/config/registers.json" )
 
 
 # struct format and number of 16-bit registers read per value.

@@ -16,7 +16,7 @@ ENV INFLUXDB_DATABASE=influxdb
 ENV SLEEP_READOUT=5
 ENV SLEEP_RETRY=120
 ENV CLIENT_TIMEOUT=10
-ENV REGISTERS_FILE=/app/registers.json
+ENV REGISTERS_FILE=/config/registers.json
 
 WORKDIR /app
 COPY requirements.txt requirements.txt
@@ -26,7 +26,7 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 RUN addgroup -S -g 10001 gateway && adduser -S -D -H -u 10001 -G gateway gateway
 
 COPY gateway /app/
-COPY registers.json /app/registers.json
+COPY examples/example2.json /config/registers.json
 
 USER 10001:10001
 
