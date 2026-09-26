@@ -1,0 +1,7 @@
+# Only send application build inputs to Docker.
+**
+!Dockerfile
+!requirements.txt
+!registers.json
+!gateway/
+!gateway/*.py
